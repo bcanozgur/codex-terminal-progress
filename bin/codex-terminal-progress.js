@@ -8,10 +8,11 @@
  *   write <state>   - Write a progress state directly (busy|idle|error|paused)
  *   setup           - Auto-configure hooks in ~/.codex/hooks.json
  *   status          - Check if terminal progress is supported
+ *   monitor-parent  - Internal watchdog that clears progress when Codex exits
  */
 
 import { openSync, writeSync } from 'node:fs';
-import { handleHookEvent } from '../src/hook-handler.js';
+import { handleHookEvent, monitorParentProcess } from '../src/hook-handler.js';
 import { writeProgress, createOscWriter } from '../src/osc.js';
 import { setupHooks } from '../src/setup.js';
 
@@ -40,7 +41,7 @@ function registerCleanup() {
 }
 
 // If this is a hook command that sets progress, register cleanup
-if (command === 'hook' && ['tool-use', 'user-prompt-submit', 'post-tool-use', 'permission-request'].includes(args[0])) {
+if (command === 'hook' && ['pre-tool-use', 'tool-use', 'user-prompt-submit', 'post-tool-use', 'permission-request'].includes(args[0])) {
   registerCleanup();
 }
 
@@ -71,6 +72,13 @@ async function main() {
     case 'setup':
       await setupHooks();
       break;
+
+    case 'monitor-parent': {
+      const parentPid = Number.parseInt(args[0], 10);
+      const result = await monitorParentProcess(parentPid);
+      process.exit(result.exitCode);
+      break;
+    }
 
     case 'status': {
       // Separate detection from /dev/tty access for better diagnostics

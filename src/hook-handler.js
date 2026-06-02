@@ -13,10 +13,13 @@ import { writeProgress } from './osc.js';
 import { readFileSync, writeFileSync, readSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { spawn } from 'node:child_process';
 
 const STATE_DIR = join(homedir(), '.codex');
 const STATE_FILE = join(STATE_DIR, 'terminal-progress-state.json');
 const DEBOUNCE_MS = 500;
+const MONITOR_INTERVAL_MS = 250;
+const MONITORED_STATES = new Set(['busy', 'error', 'paused']);
 
 function readState() {
   try {
@@ -24,14 +27,64 @@ function readState() {
       return JSON.parse(readFileSync(STATE_FILE, 'utf-8'));
     }
   } catch { /* reset */ }
-  return { currentState: 'idle', lastChange: 0, pid: 0 };
+  return { currentState: 'idle', lastChange: 0, pid: 0, monitorPid: 0 };
 }
 
-function writeState(state) {
+function writeState(state, parentPid = process.ppid, monitorPid = 0) {
   try {
     if (!existsSync(STATE_DIR)) mkdirSync(STATE_DIR, { recursive: true });
-    writeFileSync(STATE_FILE, JSON.stringify({ currentState: state, lastChange: Date.now(), pid: process.ppid }));
+    writeFileSync(STATE_FILE, JSON.stringify({
+      currentState: state,
+      lastChange: Date.now(),
+      pid: parentPid,
+      monitorPid,
+    }));
   } catch { /* best-effort */ }
+}
+
+function isProcessAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 1) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function shouldSkipProgressUpdate(state, newState, now, force = false) {
+  if (!force && newState === state.currentState) return true;
+
+  // Do not let the startup/stop idle write hide the first visible working state.
+  // The debounce is only meant to dampen rapid visible-state flapping.
+  const isStartingWork = state.currentState === 'idle' && newState !== 'idle';
+  if (!force && !isStartingWork && now - state.lastChange < DEBOUNCE_MS) return true;
+
+  return false;
+}
+
+export function shouldStartParentMonitor(state, newState, parentPid, processAlive = isProcessAlive) {
+  if (!MONITORED_STATES.has(newState)) return false;
+  if (!Number.isInteger(parentPid) || parentPid <= 1) return false;
+  if (state.pid !== parentPid) return true;
+  if (!state.monitorPid) return true;
+  return !processAlive(state.monitorPid);
+}
+
+function startParentMonitor(state, newState) {
+  if (!shouldStartParentMonitor(state, newState, process.ppid)) return state.monitorPid || 0;
+
+  try {
+    const child = spawn(process.execPath, [process.argv[1], 'monitor-parent', String(process.ppid)], {
+      detached: true,
+      stdio: 'ignore',
+      env: process.env,
+    });
+    child.unref();
+    return child.pid || 0;
+  } catch {
+    return state.monitorPid || 0;
+  }
 }
 
 /**
@@ -60,11 +113,45 @@ function updateProgress(newState, force = false) {
     }
   }
 
-  if (!force && newState === state.currentState) return false;
-  if (!force && now - state.lastChange < DEBOUNCE_MS) return false;
+  if (shouldSkipProgressUpdate(state, newState, now, force)) return false;
   const sent = writeProgress(newState);
-  if (sent) writeState(newState);
+  if (sent) {
+    if (newState === 'idle') {
+      writeState(newState, process.ppid, 0);
+    } else {
+      const nextState = {
+        ...state,
+        currentState: newState,
+        pid: process.ppid,
+        monitorPid: state.pid === process.ppid ? state.monitorPid : 0,
+      };
+      writeState(newState, process.ppid, nextState.monitorPid);
+      const monitorPid = startParentMonitor(nextState, newState);
+      writeState(newState, process.ppid, monitorPid);
+    }
+  }
   return sent;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function monitorParentProcess(parentPid, intervalMs = MONITOR_INTERVAL_MS) {
+  if (!Number.isInteger(parentPid) || parentPid <= 1) return { exitCode: 1 };
+
+  while (true) {
+    const state = readState();
+    if (state.pid !== parentPid || state.currentState === 'idle') return { exitCode: 0 };
+
+    if (!isProcessAlive(parentPid)) {
+      writeProgress('idle');
+      writeState('idle', parentPid, 0);
+      return { exitCode: 0 };
+    }
+
+    await sleep(intervalMs);
+  }
 }
 
 /**
@@ -97,6 +184,7 @@ export function handleHookEvent(eventName) {
 
   switch (eventName) {
     case 'user-prompt-submit':
+    case 'pre-tool-use':
     case 'tool-use':
       progressState = 'busy';
       break;

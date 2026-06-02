@@ -166,31 +166,29 @@ sequenceDiagram
     participant User
     participant CodexCLI
     participant Hook as codex-terminal-progress
+    participant Monitor as parent watchdog
     participant Terminal
 
     User->>CodexCLI: Sends prompt
     CodexCLI->>Hook: fires UserPromptSubmit hook
-    Hook->>Terminal: writes OSC 9;4;3 (busy)
-    Note over Terminal: Tab shows spinner
+    Hook->>Terminal: writes OSC 9;4;3 busy
+    Hook->>Monitor: watches CodexCLI process
 
     CodexCLI->>Hook: fires PreToolUse hook
-    Hook->>Terminal: writes OSC 9;4;3 (busy)
-    Note over Terminal: Tab shows spinner
+    Hook->>Terminal: writes OSC 9;4;3 busy
 
     CodexCLI->>Hook: fires PostToolUse hook
-    Hook->>Terminal: writes OSC 9;4;0 (idle)
-    Note over Terminal: Tab clears
+    Hook->>Terminal: writes OSC 9;4;0 idle
 
     User->>CodexCLI: Ctrl+C
-    CodexCLI->>Hook: fires Stop hook
-    Hook->>Terminal: writes OSC 9;4;0 (idle)
-    Note over Terminal: Tab clears
+    Monitor->>Terminal: writes OSC 9;4;0 idle
 ```
 
 ### 🛡️ Safety & Resilience
 
 - **Debounce protection** — rapid tool transitions don't cause flickering
-- **Stale session detection** — if Codex crashes unexpectedly, the next session cleans up the progress indicator automatically
+- **Parent watchdog** — clears progress when Codex exits before it can fire the stop hook
+- **Stale session detection** — the next session also clears any previously orphaned progress indicator
 - **SIGINT/SIGTERM handlers** — clean up progress on abrupt termination
 - **Graceful degradation** — silently exits if `/dev/tty` is unavailable or the terminal is unsupported
 
