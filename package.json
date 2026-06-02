@@ -1,0 +1,50 @@
+{
+  "name": "codex-terminal-progress",
+  "version": "1.0.0",
+  "description": "See your Codex CLI agent's activity right in the terminal tab — no TUI peeking required.",
+  "author": {
+    "name": "Berke Can Özgür",
+    "email": "berkecanozgur@galatasaray.net",
+    "url": "https://github.com/bcanozgur"
+  },
+  "type": "module",
+  "bin": {
+    "codex-terminal-progress": "./bin/codex-terminal-progress.js"
+  },
+  "exports": {
+    ".": {
+      "default": "./src/index.js"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bcanozgur/codex-terminal-progress.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bcanozgur/codex-terminal-progress/issues"
+  },
+  "homepage": "https://github.com/bcanozgur/codex-terminal-progress#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "bin",
+    "src"
+  ],
+  "keywords": [
+    "codex",
+    "codex-cli",
+    "open-codex",
+    "terminal",
+    "progress",
+    "iterm2",
+    "wezterm",
+    "ghostty",
+    "windows-terminal",
+    "osc",
+    "escape-codes",
+    "hooks",
+    "productivity"
+  ],
+  "license": "MIT"
+}
