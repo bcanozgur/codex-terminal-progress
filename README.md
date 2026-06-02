@@ -171,17 +171,17 @@ sequenceDiagram
 
     User->>CodexCLI: Sends prompt
     CodexCLI->>Hook: fires UserPromptSubmit hook
-    Hook->>Terminal: writes OSC 9;4;3 busy
+    Hook->>Terminal: writes busy progress
     Hook->>Monitor: watches CodexCLI process
 
     CodexCLI->>Hook: fires PreToolUse hook
-    Hook->>Terminal: writes OSC 9;4;3 busy
+    Hook->>Terminal: writes busy progress
 
     CodexCLI->>Hook: fires PostToolUse hook
-    Hook->>Terminal: writes OSC 9;4;0 idle
+    Hook->>Terminal: writes idle progress
 
     User->>CodexCLI: Ctrl+C
-    Monitor->>Terminal: writes OSC 9;4;0 idle
+    Monitor->>Terminal: writes idle progress
 ```
 
 ### 🛡️ Safety & Resilience
@@ -200,4 +200,4 @@ sequenceDiagram
 
 ## 📄 License
 
-MIT © [Berke Can Özgür](https://github.com/bcanozgur)
+MIT
