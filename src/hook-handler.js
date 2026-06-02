@@ -52,9 +52,11 @@ function updateProgress(newState, force = false) {
       process.kill(state.pid, 0);
     } catch {
       // Parent process is dead — clear stale progress from the terminated session
-      const sent = writeProgress('idle');
-      if (sent) writeState('idle');
-      // Fall through to let the new event proceed normally
+      writeProgress('idle');
+      writeState('idle');
+      // Force the update: `state.currentState` is still the stale 'busy' from readState()
+      // so without force, the state-diff check below would block the new state from writing
+      force = true;
     }
   }
 
