@@ -7,12 +7,11 @@
     No TUI peeking required.
   </p>
 
-  <!--
-    TODO: Save your screenshot as docs/screenshot-terminal.png and uncomment:
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-terminal.png">
     <img src="docs/screenshot-terminal.png" alt="Codex CLI with terminal tab progress bar" width="720"/>
-    <br/>
-  -->
-  <img src="https://iterm2.com/img/documentation-escape-codes/progress.gif" alt="OSC 9;4 progress states: idle, busy, paused, error" width="600"/>
+  </picture>
+  <br/>
   <br/>
   <sub><i>Progress bar states in the terminal tab — spinner, paused, error, cleared.</i></sub>
 
