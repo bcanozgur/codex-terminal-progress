@@ -18,6 +18,7 @@ import { spawn } from 'node:child_process';
 const STATE_DIR = join(homedir(), '.codex');
 const STATE_FILE = join(STATE_DIR, 'terminal-progress-state.json');
 const DEBOUNCE_MS = 500;
+const REFRESH_MS = 2_000;
 const MONITOR_INTERVAL_MS = 250;
 const MONITORED_STATES = new Set(['busy', 'error', 'paused']);
 
@@ -53,7 +54,10 @@ function isProcessAlive(pid) {
 }
 
 export function shouldSkipProgressUpdate(state, newState, now, force = false) {
-  if (!force && newState === state.currentState) return true;
+  if (!force && newState === state.currentState) {
+    if (MONITORED_STATES.has(newState) && now - state.lastChange >= REFRESH_MS) return false;
+    return true;
+  }
 
   // Do not let the startup/stop idle write hide the first visible working state.
   // The debounce is only meant to dampen rapid visible-state flapping.
@@ -69,6 +73,10 @@ export function shouldStartParentMonitor(state, newState, parentPid, processAliv
   if (state.pid !== parentPid) return true;
   if (!state.monitorPid) return true;
   return !processAlive(state.monitorPid);
+}
+
+export function shouldPersistProgressState(newState, sent) {
+  return newState === 'idle' || sent;
 }
 
 function startParentMonitor(state, newState) {
@@ -115,20 +123,21 @@ function updateProgress(newState, force = false) {
 
   if (shouldSkipProgressUpdate(state, newState, now, force)) return false;
   const sent = writeProgress(newState);
-  if (sent) {
-    if (newState === 'idle') {
-      writeState(newState, process.ppid, 0);
-    } else {
-      const nextState = {
-        ...state,
-        currentState: newState,
-        pid: process.ppid,
-        monitorPid: state.pid === process.ppid ? state.monitorPid : 0,
-      };
-      writeState(newState, process.ppid, nextState.monitorPid);
-      const monitorPid = startParentMonitor(nextState, newState);
-      writeState(newState, process.ppid, monitorPid);
-    }
+  if (shouldPersistProgressState(newState, sent) && newState === 'idle') {
+    writeState(newState, process.ppid, 0);
+    return sent;
+  }
+
+  if (shouldPersistProgressState(newState, sent)) {
+    const nextState = {
+      ...state,
+      currentState: newState,
+      pid: process.ppid,
+      monitorPid: state.pid === process.ppid ? state.monitorPid : 0,
+    };
+    writeState(newState, process.ppid, nextState.monitorPid);
+    const monitorPid = startParentMonitor(nextState, newState);
+    writeState(newState, process.ppid, monitorPid);
   }
   return sent;
 }

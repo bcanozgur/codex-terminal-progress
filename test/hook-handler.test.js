@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { shouldSkipProgressUpdate, shouldStartParentMonitor } from '../src/hook-handler.js';
+import {
+  shouldPersistProgressState,
+  shouldSkipProgressUpdate,
+  shouldStartParentMonitor,
+} from '../src/hook-handler.js';
 
 test('does not debounce the first visible state after idle', () => {
   const now = 1_000;
@@ -21,6 +25,20 @@ test('force bypasses state diff and debounce', () => {
   const state = { currentState: 'idle', lastChange: now };
 
   assert.equal(shouldSkipProgressUpdate(state, 'idle', now, true), false);
+});
+
+test('refreshes long-lived visible states instead of skipping forever', () => {
+  const now = 5_000;
+  const state = { currentState: 'busy', lastChange: now - 3_000 };
+
+  assert.equal(shouldSkipProgressUpdate(state, 'busy', now), false);
+});
+
+test('still skips rapid repeated visible states', () => {
+  const now = 5_000;
+  const state = { currentState: 'busy', lastChange: now - 100 };
+
+  assert.equal(shouldSkipProgressUpdate(state, 'busy', now), true);
 });
 
 test('starts parent monitor when entering a visible state', () => {
@@ -45,4 +63,10 @@ test('restarts parent monitor if the stored monitor died', () => {
   const state = { currentState: 'busy', lastChange: 0, pid: 123, monitorPid: 456 };
 
   assert.equal(shouldStartParentMonitor(state, 'error', 123, () => false), true);
+});
+
+test('persists idle state even if terminal write fails', () => {
+  assert.equal(shouldPersistProgressState('idle', false), true);
+  assert.equal(shouldPersistProgressState('busy', false), false);
+  assert.equal(shouldPersistProgressState('busy', true), true);
 });

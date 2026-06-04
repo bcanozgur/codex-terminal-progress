@@ -13,8 +13,16 @@
 
 import { openSync, writeSync } from 'node:fs';
 import { handleHookEvent, monitorParentProcess } from '../src/hook-handler.js';
-import { writeProgress, createOscWriter } from '../src/osc.js';
+import {
+  compareVersions,
+  createOscWriter,
+  detectTerminal,
+  MIN_ITERM_PROGRESS_VERSION,
+  ttyPathCandidates,
+  writeProgress,
+} from '../src/osc.js';
 import { setupHooks } from '../src/setup.js';
+import { spawnSync } from 'node:child_process';
 
 const [, , command, ...args] = process.argv;
 
@@ -43,6 +51,24 @@ function registerCleanup() {
 // If this is a hook command that sets progress, register cleanup
 if (command === 'hook' && ['pre-tool-use', 'tool-use', 'user-prompt-submit', 'post-tool-use', 'permission-request'].includes(args[0])) {
   registerCleanup();
+}
+
+function installedItermVersion() {
+  try {
+    const result = spawnSync('/usr/libexec/PlistBuddy', [
+      '-c',
+      'Print :CFBundleShortVersionString',
+      '/Applications/iTerm.app/Contents/Info.plist',
+    ], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 500,
+    });
+    if (result.status !== 0) return undefined;
+    return result.stdout.trim() || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function main() {
@@ -83,14 +109,13 @@ async function main() {
     case 'status': {
       // Separate detection from /dev/tty access for better diagnostics
       const env = process.env;
-      const terminal = env['TERM_PROGRAM'] === 'ghostty' ? 'ghostty' :
-        env['TERM_PROGRAM'] === 'iTerm.app' || env['LC_TERMINAL'] === 'iTerm2' || env['ITERM_SESSION_ID'] ? 'iterm2' :
-        env['TERM_PROGRAM'] === 'WezTerm' || env['WEZTERM_EXECUTABLE'] ? 'wezterm' :
-        env['WT_SESSION'] ? 'windows-terminal' : undefined;
+      const terminal = detectTerminal(env);
 
       const writer = createOscWriter();
       if (writer.supported) {
         console.log('✓ Terminal progress is supported');
+        console.log(`  Terminal: ${writer.terminal}`);
+        console.log(`  TTY:      ${writer.ttyPath}`);
         // Flash all states as a test
         writer.osc('3');
         setTimeout(() => writer.osc('2'), 400);
@@ -109,10 +134,28 @@ async function main() {
 
         if (terminal) {
           console.log(`✓ Detected terminal: ${terminal}`);
-          console.log('✗ Cannot access /dev/tty (expected when running in non-interactive shell)');
+          if (writer.issue) {
+            console.log(`✗ ${writer.issue.message}`);
+            if (writer.issue.code === 'iterm-version-too-old') {
+              const installedVersion = installedItermVersion();
+              if (installedVersion) {
+                console.log(`  Installed iTerm2 app: ${installedVersion}`);
+              }
+              console.log('');
+              if (installedVersion && compareVersions(installedVersion, MIN_ITERM_PROGRESS_VERSION) >= 0) {
+                console.log('The app is upgraded, but this terminal tab still belongs to the old iTerm2 process.');
+                console.log('Quit iTerm2 completely and reopen it, then open Codex again.');
+              } else {
+                console.log('Upgrade iTerm2, then open a new terminal tab and run this command again.');
+              }
+            }
+            process.exit(1);
+          }
+          console.log('✗ Cannot access a writable terminal device');
+          console.log(`  Tried: ${ttyPathCandidates().join(', ') || '(none)'}`);
           console.log('');
-          console.log('This is normal when testing here, but when Codex hooks');
-          console.log('run during actual sessions, /dev/tty will be accessible.');
+          console.log('This can be normal in non-interactive shells. During actual');
+          console.log('Codex sessions, hooks should inherit or resolve the terminal TTY.');
         } else {
           console.log('✗ Unsupported terminal');
           console.log('');
