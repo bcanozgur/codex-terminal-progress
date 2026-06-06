@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compareVersions, createOscWriter, normalizeTtyPath, ttyPathCandidates } from '../src/osc.js';
+import {
+  compareVersions,
+  createOscWriter,
+  normalizeTtyPath,
+  ttyPathCandidates,
+  writeProgress,
+} from '../src/osc.js';
 
 test('normalizes tty names into device paths', () => {
   assert.equal(normalizeTtyPath('ttys003'), '/dev/ttys003');
@@ -90,4 +96,15 @@ test('reports unsupported when terminal progress is disabled', () => {
   });
 
   assert.equal(writer.supported, false);
+});
+
+test('writes waiting as a full paused progress state', () => {
+  const writes = [];
+  const writerFactory = () => ({
+    supported: true,
+    osc: (code) => writes.push(code),
+  });
+
+  assert.equal(writeProgress('waiting', writerFactory), true);
+  assert.deepEqual(writes, ['4;100']);
 });

@@ -40,16 +40,6 @@ type = "command"
 command = "${COMMAND} tool-use"`,
   },
   {
-    name: 'PostToolUse',
-    command: `${COMMAND} post-tool-use`,
-    toml: `[[hooks.PostToolUse]]
-matcher = ".*"
-
-[[hooks.PostToolUse.hooks]]
-type = "command"
-command = "${COMMAND} post-tool-use"`,
-  },
-  {
     name: 'PermissionRequest',
     command: `${COMMAND} permission-request`,
     toml: `[[hooks.PermissionRequest]]
@@ -58,6 +48,14 @@ matcher = ".*"
 [[hooks.PermissionRequest.hooks]]
 type = "command"
 command = "${COMMAND} permission-request"`,
+  },
+  {
+    name: 'Notification',
+    command: `${COMMAND} notification`,
+    toml: `[[hooks.Notification]]
+[[hooks.Notification.hooks]]
+type = "command"
+command = "${COMMAND} notification"`,
   },
   {
     name: 'Stop',
@@ -108,8 +106,9 @@ function printNextSteps() {
   console.log('Terminal progress states:');
   console.log('  • Spinner (indeterminate) → Agent is working');
   console.log('  • Paused at 50%          → Agent is waiting for your approval');
+  console.log('  • Orange at 100%         → Agent is waiting for your input');
   console.log('  • Red (error)            → Agent encountered an error');
-  console.log('  • Cleared                → Agent is idle / waiting for your input');
+  console.log('  • Cleared                → Session start/manual idle reset');
   console.log('');
   console.log('To disable: export CODEX_TERMINAL_PROGRESS=0');
 }

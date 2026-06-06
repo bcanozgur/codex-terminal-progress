@@ -5,7 +5,8 @@
  *
  * Commands:
  *   hook <event>    - Called by Codex hooks, reads stdin for event JSON
- *   write <state>   - Write a progress state directly (busy|idle|error|paused)
+ *   notify <event>  - Called by Codex notify, e.g. turn-ended
+ *   write <state>   - Write a progress state directly (busy|idle|error|paused|waiting)
  *   setup           - Auto-configure hooks in ~/.codex/hooks.json
  *   status          - Check if terminal progress is supported
  *   monitor-parent  - Internal watchdog that clears progress when Codex exits
@@ -49,7 +50,7 @@ function registerCleanup() {
 }
 
 // If this is a hook command that sets progress, register cleanup
-if (command === 'hook' && ['pre-tool-use', 'tool-use', 'user-prompt-submit', 'post-tool-use', 'permission-request'].includes(args[0])) {
+if (command === 'hook' && ['pre-tool-use', 'tool-use', 'user-prompt-submit', 'permission-request'].includes(args[0])) {
   registerCleanup();
 }
 
@@ -84,10 +85,17 @@ async function main() {
       break;
     }
 
+    case 'notify': {
+      const eventName = args[0] || 'turn-ended';
+      const result = handleHookEvent(eventName);
+      process.exit(result.exitCode);
+      break;
+    }
+
     case 'write': {
       const state = args[0];
-      if (!state || !['busy', 'idle', 'error', 'paused'].includes(state)) {
-        console.error('Usage: codex-terminal-progress write <busy|idle|error|paused>');
+      if (!state || !['busy', 'idle', 'error', 'paused', 'waiting'].includes(state)) {
+        console.error('Usage: codex-terminal-progress write <busy|idle|error|paused|waiting>');
         process.exit(1);
       }
       const sent = writeProgress(state);
@@ -120,7 +128,8 @@ async function main() {
         writer.osc('3');
         setTimeout(() => writer.osc('2'), 400);
         setTimeout(() => writer.osc('4;50'), 800);
-        setTimeout(() => writer.osc('0'), 1200);
+        setTimeout(() => writer.osc('4;100'), 1200);
+        setTimeout(() => writer.osc('0'), 1600);
       } else {
         console.log('Terminal Detection Summary:');
         console.log('');
@@ -172,11 +181,12 @@ codex-terminal-progress — Codex CLI terminal progress indicator
 
 Usage:
   codex-terminal-progress hook <event>     Handle a Codex hook event
+  codex-terminal-progress notify <event>   Handle a Codex notify event
   codex-terminal-progress write <state>    Write a progress state directly
   codex-terminal-progress setup            Add hooks to ~/.codex/config.toml
   codex-terminal-progress status           Check if terminal is supported
 
-States: busy, idle, error, paused
+States: busy, idle, error, paused, waiting
 
 Setup: codex-terminal-progress setup
 `);

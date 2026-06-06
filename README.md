@@ -13,7 +13,7 @@
   </picture>
   <br/>
   <br/>
-  <sub><i>Progress bar states in the terminal tab — spinner, paused, error, cleared.</i></sub>
+  <sub><i>Progress bar states in the terminal tab — spinner, paused, waiting, error, cleared.</i></sub>
 
   <br/>
   <br/>
@@ -60,6 +60,7 @@
 | ------------------- | ---------------------------------------- |
 | 🔄 Spinner          | Agent is thinking or executing a tool    |
 | ⏸️ Paused at 50%    | Agent is waiting for your approval       |
+| 🟧 Orange at 100%   | Agent is waiting for your input          |
 | 🔴 Red bar          | A tool reported a non-zero exit code     |
 | (cleared)           | Agent is idle, waiting for your input    |
 
@@ -101,19 +102,17 @@ matcher = ".*"
 type = "command"
 command = "codex-terminal-progress hook tool-use"
 
-[[hooks.PostToolUse]]
-matcher = ".*"
-
-[[hooks.PostToolUse.hooks]]
-type = "command"
-command = "codex-terminal-progress hook post-tool-use"
-
 [[hooks.PermissionRequest]]
 matcher = ".*"
 
 [[hooks.PermissionRequest.hooks]]
 type = "command"
 command = "codex-terminal-progress hook permission-request"
+
+[[hooks.Notification]]
+[[hooks.Notification.hooks]]
+type = "command"
+command = "codex-terminal-progress hook notification"
 
 [[hooks.Stop]]
 [[hooks.Stop.hooks]]
@@ -137,11 +136,12 @@ Progress indicators will now appear in your terminal tab.
 ```
 Usage:
   codex-terminal-progress hook <event>     Handle a Codex hook event
+  codex-terminal-progress notify <event>   Handle a Codex notify event
   codex-terminal-progress write <state>    Write a progress state directly
   codex-terminal-progress setup            Add hooks to ~/.codex/config.toml
   codex-terminal-progress status           Check if your terminal is supported
 
-States: busy, idle, error, paused
+States: busy, idle, error, paused, waiting
 ```
 
 ### Examples
@@ -153,6 +153,7 @@ codex-terminal-progress status
 # Manually test each state
 codex-terminal-progress write busy
 codex-terminal-progress write paused
+codex-terminal-progress write waiting
 codex-terminal-progress write error
 codex-terminal-progress write idle
 ```
@@ -177,8 +178,11 @@ sequenceDiagram
     CodexCLI->>Hook: fires PreToolUse hook
     Hook->>Terminal: writes busy progress
 
-    CodexCLI->>Hook: fires PostToolUse hook
+    CodexCLI->>Hook: fires Stop hook
     Hook->>Terminal: writes idle progress
+
+    CodexCLI->>Hook: fires Notification / notify turn-ended
+    Hook->>Terminal: clears stale busy progress
 
     User->>CodexCLI: Ctrl+C
     Monitor->>Terminal: writes idle progress
@@ -187,7 +191,7 @@ sequenceDiagram
 ### 🛡️ Safety & Resilience
 
 - **Debounce protection** — rapid tool transitions don't cause flickering
-- **Parent watchdog** — clears progress when Codex exits before it can fire the stop hook
+- **Parent watchdog** — clears progress when the Codex CLI process can be resolved and exits before it can fire the stop hook
 - **Stale session detection** — the next session also clears any previously orphaned progress indicator
 - **SIGINT/SIGTERM handlers** — clean up progress on abrupt termination
 - **Graceful degradation** — silently exits if `/dev/tty` is unavailable or the terminal is unsupported

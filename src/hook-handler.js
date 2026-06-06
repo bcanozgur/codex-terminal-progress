@@ -13,14 +13,14 @@ import { writeProgress } from './osc.js';
 import { readFileSync, writeFileSync, readSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 const STATE_DIR = join(homedir(), '.codex');
 const STATE_FILE = join(STATE_DIR, 'terminal-progress-state.json');
 const DEBOUNCE_MS = 500;
 const REFRESH_MS = 2_000;
 const MONITOR_INTERVAL_MS = 250;
-const MONITORED_STATES = new Set(['busy', 'error', 'paused']);
+const MONITORED_STATES = new Set(['busy', 'error', 'paused', 'waiting']);
 
 function readState() {
   try {
@@ -53,6 +53,51 @@ function isProcessAlive(pid) {
   }
 }
 
+function processInfoForPid(pid) {
+  if (!Number.isInteger(pid) || pid <= 1) return undefined;
+
+  try {
+    const result = spawnSync('ps', ['-o', 'ppid=', '-o', 'args=', '-p', String(pid)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 500,
+    });
+    if (result.status !== 0) return undefined;
+
+    const match = result.stdout.trim().match(/^(\d+)\s+(.+)$/);
+    if (!match) return undefined;
+    return {
+      ppid: Number.parseInt(match[1], 10),
+      args: match[2],
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function isCodexCliProcess(args) {
+  const command = String(args || '');
+  if (!command || command.includes('codex-terminal-progress')) return false;
+  return /(^|[/\s])codex(\.js)?($|\s)/i.test(command) || command.includes('@openai/codex');
+}
+
+export function resolveSessionOwnerPid(startPid, processInfo = processInfoForPid, maxDepth = 8) {
+  let currentPid = startPid;
+  const seen = new Set();
+
+  for (let depth = 0; depth < maxDepth; depth += 1) {
+    if (!Number.isInteger(currentPid) || currentPid <= 1 || seen.has(currentPid)) return undefined;
+    seen.add(currentPid);
+
+    const info = processInfo(currentPid);
+    if (!info) return undefined;
+    if (isCodexCliProcess(info.args)) return currentPid;
+    currentPid = info.ppid;
+  }
+
+  return undefined;
+}
+
 export function shouldSkipProgressUpdate(state, newState, now, force = false) {
   if (!force && newState === state.currentState) {
     if (MONITORED_STATES.has(newState) && now - state.lastChange >= REFRESH_MS) return false;
@@ -79,11 +124,11 @@ export function shouldPersistProgressState(newState, sent) {
   return newState === 'idle' || sent;
 }
 
-function startParentMonitor(state, newState) {
-  if (!shouldStartParentMonitor(state, newState, process.ppid)) return state.monitorPid || 0;
+function startParentMonitor(state, newState, parentPid) {
+  if (!shouldStartParentMonitor(state, newState, parentPid)) return state.monitorPid || 0;
 
   try {
-    const child = spawn(process.execPath, [process.argv[1], 'monitor-parent', String(process.ppid)], {
+    const child = spawn(process.execPath, [process.argv[1], 'monitor-parent', String(parentPid)], {
       detached: true,
       stdio: 'ignore',
       env: process.env,
@@ -98,13 +143,14 @@ function startParentMonitor(state, newState) {
 /**
  * Update the terminal progress bar.
  *
- * @param {string} newState - The new progress state ('busy'|'idle'|'error'|'paused').
+ * @param {string} newState - The new progress state ('busy'|'idle'|'error'|'paused'|'waiting').
  * @param {boolean} force - If true, bypass state-diff check AND debounce timer.
  * @returns {boolean} Whether the progress was written.
  */
 function updateProgress(newState, force = false) {
   const state = readState();
   const now = Date.now();
+  const sessionOwnerPid = resolveSessionOwnerPid(process.ppid) || 0;
 
   // Stale session detection: if stored PID is from a dead parent, clear progress first.
   if (state.pid && state.currentState !== 'idle') {
@@ -124,7 +170,7 @@ function updateProgress(newState, force = false) {
   if (shouldSkipProgressUpdate(state, newState, now, force)) return false;
   const sent = writeProgress(newState);
   if (shouldPersistProgressState(newState, sent) && newState === 'idle') {
-    writeState(newState, process.ppid, 0);
+    writeState(newState, sessionOwnerPid, 0);
     return sent;
   }
 
@@ -132,12 +178,12 @@ function updateProgress(newState, force = false) {
     const nextState = {
       ...state,
       currentState: newState,
-      pid: process.ppid,
-      monitorPid: state.pid === process.ppid ? state.monitorPid : 0,
+      pid: sessionOwnerPid,
+      monitorPid: state.pid === sessionOwnerPid ? state.monitorPid : 0,
     };
-    writeState(newState, process.ppid, nextState.monitorPid);
-    const monitorPid = startParentMonitor(nextState, newState);
-    writeState(newState, process.ppid, monitorPid);
+    writeState(newState, sessionOwnerPid, nextState.monitorPid);
+    const monitorPid = startParentMonitor(nextState, newState, sessionOwnerPid);
+    writeState(newState, sessionOwnerPid, monitorPid);
   }
   return sent;
 }
@@ -161,6 +207,76 @@ export async function monitorParentProcess(parentPid, intervalMs = MONITOR_INTER
 
     await sleep(intervalMs);
   }
+}
+
+export function progressStateForHookEvent(eventName, inputData = {}) {
+  const event = String(eventName || '').toLowerCase();
+
+  switch (event) {
+    case 'user-prompt-submit':
+    case 'pre-tool-use':
+    case 'tool-use':
+      return { progressState: 'busy', force: false };
+
+    case 'post-tool-use': {
+      const resp = inputData?.tool_response;
+      if (resp && typeof resp === 'object') {
+        const exitCode = resp.exit_code ?? resp.exitCode;
+        if (exitCode !== undefined && exitCode !== 0 && exitCode !== null) {
+          return { progressState: 'error', force: false };
+        }
+      }
+      // Older installs may still have PostToolUse hooks configured. A
+      // successful tool completion does not mean Codex has stopped working;
+      // keep the visible busy state until Stop clears it.
+      return { progressState: 'busy', force: false };
+    }
+
+    case 'session-start':
+      return { progressState: 'idle', force: true, clearStale: true };
+
+    case 'idle':
+    case 'stop':
+    case 'turn-ended':
+    case 'turn-end':
+    case 'response-complete':
+      return { progressState: 'idle', force: true };
+
+    case 'permission-request':
+      return { progressState: 'paused', force: false };
+
+    case 'notification':
+    case 'notify':
+      return progressStateForNotification(inputData);
+
+    default:
+      return { progressState: null, force: false };
+  }
+}
+
+function hookPayloadText(value, depth = 0) {
+  if (value === null || value === undefined || depth > 4) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return value.map((item) => hookPayloadText(item, depth + 1)).join('\n');
+  if (typeof value === 'object') return Object.values(value).map((item) => hookPayloadText(item, depth + 1)).join('\n');
+  return '';
+}
+
+export function progressStateForNotification(inputData = {}) {
+  const text = hookPayloadText(inputData).toLowerCase();
+
+  if (/(usage limit|rate limit|upgrade to pro|purchase more credits|try again at|you'?ve hit your usage limit)/.test(text)) {
+    return { progressState: 'idle', force: true };
+  }
+
+  if (/(waiting for (your )?(input|approval)|permission|approval required)/.test(text)) {
+    return { progressState: 'paused', force: false };
+  }
+
+  // A terminal notification means Codex has surfaced something to the user, not
+  // that the agent is still computing. Clear any stale green busy indicator.
+  return { progressState: 'idle', force: true };
 }
 
 /**
@@ -188,44 +304,11 @@ export function handleHookEvent(eventName) {
     try { inputData = JSON.parse(stdin); } catch { /* ignore */ }
   }
 
-  let progressState = null;
-  let force = false;
+  const { progressState, force, clearStale } = progressStateForHookEvent(eventName, inputData);
 
-  switch (eventName) {
-    case 'user-prompt-submit':
-    case 'pre-tool-use':
-    case 'tool-use':
-      progressState = 'busy';
-      break;
-
-    case 'post-tool-use': {
-      // Check for tool errors
-      const resp = inputData?.tool_response;
-      if (resp && typeof resp === 'object') {
-        const exitCode = resp.exit_code ?? resp.exitCode;
-        if (exitCode !== undefined && exitCode !== 0 && exitCode !== null) {
-          progressState = 'error';
-        }
-      }
-      break;
-    }
-
-    case 'session-start':
-      // Force-clear any stale progress left from a previously killed Codex session
-      writeProgress('idle');
-      progressState = 'idle';
-      force = true;
-      break;
-
-    case 'stop':
-    case 'idle':
-      progressState = 'idle';
-      force = true;
-      break;
-
-    case 'permission-request':
-      progressState = 'paused';
-      break;
+  if (clearStale) {
+    // Force-clear any stale progress left from a previously killed Codex session.
+    writeProgress('idle');
   }
 
   if (progressState) updateProgress(progressState, force);

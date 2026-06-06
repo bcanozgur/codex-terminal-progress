@@ -149,7 +149,7 @@ export function ttyPathCandidates({
  * - `3` = indeterminate (busy)
  * - `0` = cleared (idle)
  * - `2` = error (red)
- * - `4;{n}` = determinate at n% (e.g., `4;50` = paused/halfway)
+ * - `4;{n}` = paused/orange at n% (e.g., `4;50` = paused/halfway)
  *
  * @type {Object<string, string>}
  */
@@ -158,6 +158,7 @@ const PROGRESS_CODES = {
   idle: '0',
   error: '2',
   paused: '4;50',
+  waiting: '4;100',
 };
 
 /**
@@ -237,11 +238,11 @@ export function createOscWriter({
 /**
  * Write a specific progress state to the terminal.
  *
- * @param {'busy'|'idle'|'error'|'paused'} state - The progress state to show.
+ * @param {'busy'|'idle'|'error'|'paused'|'waiting'} state - The progress state to show.
  * @returns {boolean} Whether the write was successful.
  */
-export function writeProgress(state) {
-  const writer = createOscWriter();
+export function writeProgress(state, writerFactory = createOscWriter) {
+  const writer = writerFactory();
   if (!writer.supported) return false;
   const code = PROGRESS_CODES[state];
   if (!code) return false;
