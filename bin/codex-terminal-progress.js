@@ -6,8 +6,9 @@
  * Commands:
  *   hook <event>    - Called by Codex hooks, reads stdin for event JSON
  *   notify <event>  - Called by Codex notify, e.g. turn-ended
+ *   notify-chain    - Clear progress, then run another notify command
  *   write <state>   - Write a progress state directly (busy|idle|error|paused|waiting)
- *   setup           - Auto-configure hooks in ~/.codex/hooks.json
+ *   setup           - Auto-configure hooks in ~/.codex/config.toml
  *   status          - Check if terminal progress is supported
  *   monitor-parent  - Internal watchdog that clears progress when Codex exits
  */
@@ -89,6 +90,23 @@ async function main() {
       const eventName = args[0] || 'turn-ended';
       const result = handleHookEvent(eventName);
       process.exit(result.exitCode);
+      break;
+    }
+
+    case 'notify-chain': {
+      const eventName = args[0] || 'turn-ended';
+      const result = handleHookEvent(eventName);
+      const nextCommand = args[1];
+      if (!nextCommand) {
+        process.exit(result.exitCode);
+      }
+
+      const next = spawnSync(nextCommand, args.slice(2), {
+        env: process.env,
+        stdio: 'ignore',
+      });
+      if (next.error) process.exit(1);
+      process.exit(next.status ?? result.exitCode);
       break;
     }
 
@@ -182,6 +200,8 @@ codex-terminal-progress — Codex CLI terminal progress indicator
 Usage:
   codex-terminal-progress hook <event>     Handle a Codex hook event
   codex-terminal-progress notify <event>   Handle a Codex notify event
+  codex-terminal-progress notify-chain <event> <command...>
+                                            Clear progress, then run another notify command
   codex-terminal-progress write <state>    Write a progress state directly
   codex-terminal-progress setup            Add hooks to ~/.codex/config.toml
   codex-terminal-progress status           Check if terminal is supported

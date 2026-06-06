@@ -79,12 +79,16 @@ codex-terminal-progress setup
 ```
 
 This appends the required hook entries to `~/.codex/config.toml`.
+If you already have a Codex `notify` command, setup preserves it by chaining it
+after `codex-terminal-progress notify turn-ended`.
 
 ### Manual configuration
 
 Add the following to `~/.codex/config.toml`:
 
 ```toml
+notify = ["codex-terminal-progress", "notify", "turn-ended"]
+
 [[hooks.SessionStart]]
 [[hooks.SessionStart.hooks]]
 type = "command"
@@ -137,6 +141,8 @@ Progress indicators will now appear in your terminal tab.
 Usage:
   codex-terminal-progress hook <event>     Handle a Codex hook event
   codex-terminal-progress notify <event>   Handle a Codex notify event
+  codex-terminal-progress notify-chain <event> <command...>
+                                            Clear progress, then run another notify command
   codex-terminal-progress write <state>    Write a progress state directly
   codex-terminal-progress setup            Add hooks to ~/.codex/config.toml
   codex-terminal-progress status           Check if your terminal is supported

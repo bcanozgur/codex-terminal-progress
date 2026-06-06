@@ -99,6 +99,10 @@ test('clears progress when Codex sends a turn-ended notify event', () => {
   assert.deepEqual(progressStateForHookEvent('turn-ended'), { progressState: 'idle', force: true });
 });
 
+test('clears progress when Codex records task completion', () => {
+  assert.deepEqual(progressStateForHookEvent('task_complete'), { progressState: 'idle', force: true });
+});
+
 test('resumes busy state when the user submits input', () => {
   assert.deepEqual(progressStateForHookEvent('user-prompt-submit'), { progressState: 'busy', force: false });
 });

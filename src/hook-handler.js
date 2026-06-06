@@ -239,6 +239,8 @@ export function progressStateForHookEvent(eventName, inputData = {}) {
     case 'stop':
     case 'turn-ended':
     case 'turn-end':
+    case 'task-complete':
+    case 'task_complete':
     case 'response-complete':
       return { progressState: 'idle', force: true };
 
